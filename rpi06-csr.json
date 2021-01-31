@@ -1,0 +1,16 @@
+{
+  "CN": "system:node:rpi06",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Redwoood City",
+      "O": "system:nodes",
+      "OU": "Octopik3s The Hard Way",
+      "ST": "California"
+    }
+  ]
+}

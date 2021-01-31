@@ -1,0 +1,16 @@
+{
+  "CN": "kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Ohone/Costanoan lands",
+      "O": "Octopik3s",
+      "OU": "Octopik3s The Hard Way",
+      "ST": "California"
+    }
+  ]
+}

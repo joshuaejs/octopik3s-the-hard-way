@@ -890,9 +890,13 @@ sudo systemctl start keeplived haproxy
 
 ## bootstrapping the worker nodes
 
+(done via tmux to all workers)
+
 ### download and install worker binaries
 
 - [cni-plugins](https://github.com/containernetworking/plugins/releases/)
+  - the `overlay` kernel module doesn't exist/won't load which using these binaries
+  - using the apt package `containernetworking-plugins`
 - [runc](https://github.com/opencontainers/runc/releases)
   - there is no arm64 binary; will have to use apt
 - [containerd](https://github.com/containerd/containerd/releases)
@@ -903,20 +907,17 @@ sudo systemctl start keeplived haproxy
 ```txt
 sudo mkdir -p \
   /etc/cni/net.d \
-  /opt/cni/bin \
   /var/lib/kubelet \
   /var/lib/kube-proxy \
   /var/lib/kubernetes \
   /var/run/kubernetes
 
-sudo apt-get update && sudo apt-get install runc containerd
 
 wget -q --show-progress --https-only --timestamping \
-  https://github.com/containernetworking/plugins/releases/download/v0.9.0/cni-plugins-linux-arm64-v0.9.0.tgz \
   https://dl.k8s.io/v1.20.0/kubernetes-node-linux-arm64.tar.gz \
   https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.20.0/crictl-v1.20.0-linux-arm64.tar.gz
 
-sudo tar -xvf cni-plugins-linux-arm64-v0.9.0.tgz -C /opt/cni/bin/
+
 sudo tar -xvf crictl-v1.20.0-linux-arm64.tar.gz -C /usr/local/bin/
 tar -xvf kubernetes-node-linux-arm64-tar.gz
 rm -f kubernetes/node/bin/kubeadm
@@ -926,11 +927,67 @@ rm -rf kubernetes
 
 ### configure cni networking
 
-podCIDR??????
+create `bridge` network configuration
+
+```txt
+cat <<EOF | sudo tee /etc/cni/net.d/10-bridge.conf
+{
+    "cniVersion": "0.3.1",
+    "name": "bridge",
+    "type": "bridge",
+    "bridge": "cnio0",
+    "isGateway": true,
+    "ipMasq": true,
+    "ipam": {
+        "type": "host-local",
+        "ranges": [
+          [{"subnet": "10.200.0.0/16"}]
+        ],
+        "routes": [{"dst": "0.0.0.0/0"}]
+    }
+}
+EOF
+```
+
+create `loopback` network configuration
+
+```txt
+cat <<EOF | sudo tee /etc/cni/net.d/99-loopback.conf
+{
+    "cniVersion": "0.3.1",
+    "name": "lo",
+    "type": "loopback"
+}
+EOF
+```
 
 ### configure containerd
 
-create the `containerd` configuration (done via tmux to all workers). update the `runtime_engine` with the correct path for the apt installed `runc`
+some prerequisites as documented on [container runtimes](https://kubernetes.io/docs/setup/production-environment/container-runtimes/#containerd)
+
+```txt
+cat <<EOF | sudo tee /etc/modules-load.d/containerd.conf
+overlay
+br_netfilter
+EOF
+
+sudo modprobe overlay
+sudo modprobe br_netfilter
+
+# Setup required sysctl params, these persist across reboots.
+cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes-cri.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.ipv4.ip_forward                 = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+EOF
+
+# Apply sysctl params without reboot
+sudo sysctl --system
+```
+
+install the arm64 binaries `sudo apt-get udpate && sudo apt-get install containerd runc`
+
+create the `containerd` configuration. update the `runtime_engine` with the correct path for the apt installed `runc`
 
 - references
   - [migrating k8s from docker to containerd](https://josebiro.medium.com/migrating-k8s-from-docker-to-containerd-484aaf6baf40)
@@ -941,3 +998,125 @@ sudo containerd config default | sudo tee /etc/containerd/config
 ```
 
 the systemd `containerd.service` is created when installed by apt.
+
+### configure the kubelet
+
+```txt
+sudo mv ${HOSTNAME}-key.pem ${HOSTNAME}.pem /var/lib/kubelet/
+sudo mv ${HOSTNAME}.kubeconfig /var/lib/kubelet/kubeconfig
+sudo mv ca.pem /var/lib/kubernetes/
+```
+
+create `kubelet-config.yaml`
+
+```txt
+cat <<EOF | sudo tee /var/lib/kubelet/kubelet-config.yaml
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+  x509:
+    clientCAFile: "/var/lib/kubernetes/ca.pem"
+authorization:
+  mode: Webhook
+clusterDomain: "cluster.local"
+clusterDNS:
+  - "10.240.0.10"
+podCIDR: "10.200.0.0/16"
+resolvConf: "/run/systemd/resolve/resolv.conf"
+runtimeRequestTimeout: "15m"
+tlsCertFile: "/var/lib/kubelet/${HOSTNAME}.pem"
+tlsPrivateKeyFile: "/var/lib/kubelet/${HOSTNAME}-key.pem"
+EOF
+```
+
+create the `kubelet` service
+
+```txt
+cat <<EOF | sudo tee /etc/systemd/system/kubelet.service
+[Unit]
+Description=Kubernetes Kubelet
+Documentation=https://github.com/kubernetes/kubernetes
+After=containerd.service
+Requires=containerd.service
+
+[Service]
+ExecStart=/usr/local/bin/kubelet \\
+  --config=/var/lib/kubelet/kubelet-config.yaml \\
+  --container-runtime=remote \\
+  --container-runtime-endpoint=unix:///run/containerd/containerd.sock \\
+  --image-pull-progress-deadline=2m \\
+  --kubeconfig=/var/lib/kubelet/kubeconfig \\
+  --network-plugin=cni \\
+  --cni-bin-dir="/usr/lib/cni"
+  --register-node=true \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+### configure kube-proxy
+
+create `kube-proxy-config.yaml`
+
+```txt
+cat <<EOF | sudo tee /var/lib/kube-proxy/kube-proxy-config.yaml
+kind: KubeProxyConfiguration
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+clientConnection:
+  kubeconfig: "/var/lib/kube-proxy/kubeconfig"
+mode: "iptables"
+clusterCIDR: "10.200.0.0/16"
+EOF
+```
+
+create `kube-proxy` service
+
+```txt
+cat <<EOF | sudo tee /etc/systemd/system/kube-proxy.service
+[Unit]
+Description=Kubernetes Kube Proxy
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-proxy \\
+  --config=/var/lib/kube-proxy/kube-proxy-config.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+verify
+
+```txt
+joshuaejs@wsl2buntu in ~/repo/othw on main*
+$ kubectl get nodes -o wide
+NAME    STATUS     ROLES    AGE     VERSION   INTERNAL-IP      EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION     CONTAINER-RUNTIME
+rpi04   NotReady   <none>   2m21s   v1.20.0   192.168.50.196   <none>        Ubuntu 20.04.2 LTS   5.4.0-1015-raspi   containerd://1.3.3-0ubuntu2.2
+rpi05   NotReady   <none>   2m21s   v1.20.0   192.168.50.197   <none>        Ubuntu 20.04.2 LTS   5.4.0-1015-raspi   containerd://1.3.3-0ubuntu2.2
+rpi06   NotReady   <none>   2m21s   v1.20.0   192.168.50.198   <none>        Ubuntu 20.04.2 LTS   5.4.0-1015-raspi   containerd://1.3.3-0ubuntu2.2
+rpi07   NotReady   <none>   2m21s   v1.20.0   192.168.50.199   <none>        Ubuntu 20.04.2 LTS   5.4.0-1015-raspi   containerd://1.3.3-0ubuntu2.2
+rpi08   NotReady   <none>   2m20s   v1.20.0   192.168.50.200   <none>        Ubuntu 20.04.2 LTS   5.4.0-1015-raspi   containerd://1.3.3-0ubuntu2.2
+```
+
+## configuring kubectl for remote access
+
+done
+
+## provisioning routes
+
+to be completed once kube-proxy/conntrack/kernel modules are working/correct
+
+## deploying the dns cluster add-on
+
+to be completed once kube-proxy/conntrack/kernel modules are working/correct

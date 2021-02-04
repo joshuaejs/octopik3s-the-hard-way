@@ -4,11 +4,12 @@ installation notes and details
 
 ## prerequisites
 
-since this is not using gcp, none of those steps are applicable. tmux is being used, and these were handled using an ansible playbook:
+since this is not using gcp, none of those steps are applicable. tmux is being used, and these are handled using an ansible playbook in provisioning compute resources.
 
 - os update
 - ensure that
   - cgroups are enabled
+  - extraneous services are disabled
   - swap is disabled
   - ip tables is in legacy mode
 - required packages are installed on each host

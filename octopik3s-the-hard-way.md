@@ -4,9 +4,9 @@ installation notes and details
 
 ## prerequisites
 
-since this is not using gcp, none of those steps are applicable. tmux is being used, and these are handled using an ansible playbook in provisioning compute resources.
+since this is not using gcp, none of those steps are applicable. tmux is being used, and provisioning compute resources was handled with ansible playbooks, to ensure that:
 
-- os update
+- os is updated
 - ensure that
   - cgroups are enabled
   - extraneous services are disabled
@@ -89,7 +89,7 @@ cat > ca-csr.json <<EOF
   "names": [
     {
       "C": "US",
-      "L": "Ohone/Costanoan lands",
+      "L": "Ohlone lands",
       "O": "Octopik3s",
       "OU": "CA",
       "ST": "California"
@@ -127,7 +127,7 @@ cat > admin-csr.json <<EOF
   "names": [
     {
       "C": "US",
-      "L": "Ohone/Costanoan lands",
+      "L": "Ohlone lands",
       "O": "system:masters",
       "OU": "Octopik3s The Hard Way",
       "ST": "California"
@@ -159,7 +159,7 @@ do
   "names": [
     {
       "C": "US",
-      "L": "Ohone/Costanoan lands",
+      "L": "Ohlone lands",
       "O": "system:nodes",
       "OU": "Octopik3s The Hard Way",
       "ST": "California"
@@ -223,7 +223,7 @@ cat > kube-proxy-csr.json <<EOF
   "names": [
     {
       "C": "US",
-      "L": "Ohone/Costanoan lands",
+      "L": "Ohlone lands",
       "O": "system:node-proxier",
       "OU": "Octopik3s The Hard Way",
       "ST": "California"
@@ -253,7 +253,7 @@ cat > kube-scheduler-csr.json <<EOF
   "names": [
     {
       "C": "US",
-      "L": "Ohone/Costanoan lands",
+      "L": "Ohlone lands",
       "O": "system:kube-scheduler",
       "OU": "Octopik3s The Hard Way",
       "ST": "California"
@@ -285,7 +285,7 @@ cat > kubernetes-csr.json <<EOF
   "names": [
     {
       "C": "US",
-      "L": "Ohone/Costanoan lands",
+      "L": "Ohlone lands",
       "O": "Octopik3s",
       "OU": "Octopik3s The Hard Way",
       "ST": "California"
@@ -318,7 +318,7 @@ cat > service-account-csr.json <<EOF
   "names": [
     {
       "C": "US",
-      "L": "Ohone/Costanoan lands",
+      "L": "Ohlone lands",
       "O": "Octopik3s",
       "OU": "Octopik3s The Hard Way",
       "ST": "California"
@@ -868,7 +868,7 @@ frontend octopik3s
   default_backend octopik3s
 
 backend octopik3s
-  option httpcheck GET /healthz
+  option httpchck GET /healthz
   http-check expect status 200
   mode tcp
   option ssl-hello-chk
@@ -919,7 +919,7 @@ wget -q --show-progress --https-only --timestamping \
   https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.20.0/crictl-v1.20.0-linux-arm64.tar.gz
 
 
-sudo tar -xvf crictl-v1.20.0-linux-arm64.tar.gz -C /usr/local/bin/
+sudo tar -zxf crictl-v1.20.0-linux-arm64.tar.gz -C /usr/local/bin/
 tar -xvf kubernetes-node-linux-arm64-tar.gz
 rm -f kubernetes/node/bin/kubeadm
 sudo mv kubernetes/node/bin/k* /usr/local/bin/
@@ -942,7 +942,7 @@ cat <<EOF | sudo tee /etc/cni/net.d/10-bridge.conf
     "ipam": {
         "type": "host-local",
         "ranges": [
-          [{"subnet": "10.200.0.0/16"}]
+          [{"subnet": "10.200.`(hostname -s|cut -c5)`.0/24"}]
         ],
         "routes": [{"dst": "0.0.0.0/0"}]
     }
@@ -986,9 +986,9 @@ EOF
 sudo sysctl --system
 ```
 
-install the arm64 binaries `sudo apt-get udpate && sudo apt-get install containerd runc`
+Ensure the arm64 binaries are installed and up-to-date: `sudo apt-get udpate && sudo apt-get install containerd runc`
 
-create the `containerd` configuration. update the `runtime_engine` with the correct path for the apt installed `runc`
+Create the `containerd` configuration. update the `runtime_engine` with the correct path for the apt installed `runc`
 
 - references
   - [migrating k8s from docker to containerd](https://josebiro.medium.com/migrating-k8s-from-docker-to-containerd-484aaf6baf40)
